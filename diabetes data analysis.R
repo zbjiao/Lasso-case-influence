@@ -1,7 +1,7 @@
+source("caseweightlasso2023.R")
+
 data(diabetes)
 attach(diabetes)
-# result = CD_all_concise(x,y,finesse=0.01,plot = T,threshold = T)
-
 
 get_mse <- function(est,x_train,y_train,x_test,y_test){
   beta0 = est$a0
@@ -72,9 +72,7 @@ mean(test_mse$"0.01"[,2]/test_mse$"0.01"[,4])
 set.seed(1)
 
 result_before = c()
-# selection_before = c()
 result_after = c()
-# selection_after = c()
 lambda_before = c()
 lambda_after = c()
 x = centralize(x)
@@ -92,9 +90,7 @@ for (i in 1:1000){
   est2 = glmnet(x_trimmed,y_trimmed,lambda=fit2$lambda.min,standardize=FALSE,thresh=1e-16)
   
   result_before = cbind(result_before,as.vector(coef(est)))
-  # selection_before = cbind(selection_before,as.vector(coef(est))!=0)
   result_after = cbind(result_after,as.vector(coef(est2)))
-  # selection_after = cbind(selection_after,as.vector(coef(est2))!=0)
   lambda_before = c(lambda_before,fit$lambda.min*nrow(x))
   lambda_after = c(lambda_after,fit2$lambda.min*nrow(x_trimmed))
 }
@@ -127,34 +123,5 @@ write.csv(round(rda_ans,2), "real_data_analysis.csv")
 
 mean(apply(result_before,2,function(x) sum(x!=0)))
 mean(apply(result_after, 2,function(x) sum(x!=0)))
-
-
-
-r = CD_all_concise(x,y,0.01)
-
-par(mfrow=c(1,1))
-fit = cv.glmnet(x,y,standardize = F)
-est = glmnet(x,y,lambda=fit$lambda.min,standardize=FALSE,thresh=1e-16)
-
-# result = CD_one_fraction(x,y,fit$lambda.min*nrow(x))
-result = CD_one_fraction(x,y,3)
-
-r$fraction[findInterval( fit$lambda.min*nrow(x), r$Lambda_list)]
-
-residy = abs(y - mean(y) - (x%*%result$beta))
-x_ = x[,result$beta!=0]
-lev = diag(x_%*%solve(crossprod(x_))%*%t(x_))
-df_ = data.frame(index = 1:442, lev = lev, res = residy, Case_Influence = result$CD_vec)
-
-ggplot(data=df_, aes(x=lev, y=res, size=Case_Influence)) +
-  geom_point(aes(color = Case_Influence > 0.025)) +  # Color points based on condition
-  scale_color_manual(values = c("TRUE" = "red", "F" = "black"), guide = FALSE) +  # Set custom colors and remove color legend
-  xlab(TeX('leverage ($h_{ii}$)')) + 
-  ylab(TeX('absolute residual ($|y-\\hat{y}|$)')) +
-  theme(panel.background = element_rect(fill = "white"),
-        legend.position = 'None',
-        panel.border = element_rect(colour = "black", fill=NA, linewidth=0.5)) 
-  labs(size = "Case Influence")  # Include only size legend
-
 
 

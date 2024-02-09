@@ -7,6 +7,265 @@ library(foreach)
 library(doParallel)
 library(tmvtnorm)
 
+get_xi <- function(w, h, n){
+  # given omega, n and hkk, return xi
+  n*(1-w)/(n-1+w-n*(1-w)*h)
+  # (1-w)/(1-(1-w)*h)
+}
+
+get_w <- function(xi, h, n){
+  # reverse function of get_xi, 
+  # given xi, hkk and n, return omega
+  (n-xi*(n-1-n*h))/(n+(1+n*h)*xi)
+}
+
+centralize <- function(x, r = F){
+  # centralize x with mean 0 and sd 1/sqrt(n-1)
+  n = dim(x)[1]
+  meanx <- drop(rep(1,n) %*% x)/n
+  x = scale(x, meanx, FALSE)
+  normx = sqrt(drop(rep(1,n) %*% (x^2)))
+  if (r){
+    return(list(m = meanx, d = scale(x,FALSE,normx), v = normx)) 
+  }
+  scale(x, FALSE, normx) 
+}
+
+beta_path <- function(X,y,k=1,lambda=50, plot=0, lb = 0, hk_ = F){
+  # data set:x
+  # response:y
+  # case of interest:k
+  # constrain: summation abs(beta) <= t
+  n = dim(X)[1]
+  p = dim(X)[2]
+  
+  # obtain lasso solution
+  obj = lars(X,y,type='lasso')
+  beta_hat = as.vector(predict.lars(obj,mode='lambda', s=lambda, type = 'coefficients')$coefficients)
+  ybar = mean(y)
+  # record the sign of each covariate 
+  s = sign(beta_hat)
+  # active set 
+  A = s!=0
+  
+  # derivative of f in terms of covariates in nonactive set
+  d_hat = t(X[,!A])%*%y - t(X[,!A])%*%X%*%beta_hat
+  if (sum(A)==0){
+    XX = matrix(0,nrow=p,ncol=p)
+    hk = as.matrix(rep(0,n),nrow=n)
+  }
+  else{
+    XX = solve(t(X[,A])%*%X[,A])
+    hk = X[,A]%*%XX%*%X[k,A]
+  }
+  
+  # current predictor of yk 
+  yk_hat = drop(ybar + X[k,] %*% beta_hat)
+  
+  # eazy case
+  if (lambda == 0){
+    X2 = cbind(1,X)
+    beta1 = (solve(t(X2)%*%X2 - X2[k,]%*%t(X2[k,]))%*%(t(X2)%*%y - X2[k,]*y[k]))
+    beta10 = beta1[1]
+    beta1 = beta1[2:(p+1)]
+    ind = c(which((beta_hat>0) & (beta1<0)),  which((beta_hat<0) & (beta1>0)))
+    if(plot){
+      coln = colnames(X)
+      plot_helper0 <- function(w,ind){
+        A = get_xi(w,hk[k],n)%*%t(XX%*%X[k,]*(yk_hat - y[k]))
+        t(A[,ind]) + (XX%*%(t(X)%*%y))[ind]
+      }
+      if (length(ind)>0){
+        if (length(ind) == 1){
+          xx = data.frame(coef = coln[ind])
+          print(ggplot()+xlim(lb,1) + xlab(TeX("$\\omega$")) + ylab(TeX("$\\beta$")) + 
+                  geom_function(data = xx, fun = plot_helper0, args = list(ind),
+                                aes(color = coef))+ 
+                  ggtitle(paste("Solution path for Case",toString(k)))+
+                  theme(plot.title = element_text(hjust = 0.5)))
+        }
+        else{
+          fig = ggplot()+xlim(lb,1)
+          for (j in 1:length(ind)){
+            xx = data.frame(coef = coln[ind[j]])
+            fig = fig + geom_function(data = xx, fun = plot_helper0, args = list(ind[j]),
+                                      aes(color = coef)) 
+          }
+          print(fig + xlab(TeX("$\\omega$")) + ylab("$\\beta$") + ggtitle(paste("Solution path for Case",toString(k))) +
+                  theme(plot.title = element_text(hjust = 0.5)))
+        }
+      }
+      else{
+        print(paste('there is no sign change for case',toString(k)))
+      }
+    }
+    if(hk_){
+      return(list(w_path = c(1,0),hkk_path = c(hk[k], hk[k]), 
+                  beta_path = rbind(beta_hat, beta1), s_path = rbind(s,s = sign(beta1)), beta0_path = c(ybar, beta10),
+                  hk_path = cbind(hk,hk), l1norm = sum(abs(beta_hat))))
+    }else{
+      return(list(w_path = c(1,0),hkk_path = c(hk[k], hk[k]), 
+                  beta_path = rbind(beta_hat, beta1), s_path = rbind(s,s = sign(beta1)), 
+                  beta0_path = c(ybar, beta10),l1norm = sum(abs(beta_hat))))
+    }
+  }
+  
+  hk_path = c()
+  # beta path records beta hat's value at each breakpoint
+  beta_path = c(beta_hat)
+  # so does beta0_path records intercept
+  beta0_path = c(ybar)
+  # and sign change
+  s_path = c(s)
+  # and omega value at each breakpoint
+  w_path = c()
+  hkk_path = c()
+  w = 1
+  while (T){
+    hk_path = cbind(hk_path,hk)
+    w_path = c(w_path, w)
+    hkk_path = c(hkk_path, hk[k])
+    xi = get_xi(w, hk[k], n)
+    bias = yk_hat - y[k]
+    if (sum(A) == 0){
+      xi_cand1 = c()
+    }
+    else{
+      slope_beta = XX%*%X[k,A]*bias
+      xi_cand1 = -beta_hat[A]/slope_beta
+    }
+    slope_d = (X[k,!A] - t(X[,!A])%*%hk)*bias
+    # xi candidates
+    # xi_cand1 = -beta_hat[A]/slope_beta
+    xi_cand2p = (-lambda-d_hat)/slope_d
+    xi_cand2m = (lambda-d_hat)/slope_d
+    xi_cand = c(xi_cand1, xi_cand2p, xi_cand2m)
+    xi_cand0 = min(xi_cand[xi_cand>(xi+0.00001)],Inf)
+    ind = which(xi_cand == xi_cand0)
+    
+    # update beta
+    if (sum(A) > 0){
+      beta_hat[A] = beta_hat[A] + min(get_xi(lb,hk[k],n),xi_cand0)*slope_beta
+    }
+    beta_path = rbind(beta_path, beta_hat)
+    beta_hat0 = ybar + min(get_xi(lb,hk[k],n),xi_cand0) * bias/n
+    beta0_path = c(beta0_path, beta_hat0)
+    
+    # if the xi is off the bound, stop the algorithm
+    if (xi_cand0 > get_xi(lb,hk[k],n)){
+      w_path = c(w_path, lb)
+      hkk_path = c(hkk_path, hk[k])
+      s_path = rbind(s_path, s)
+      hk_path = cbind(hk_path, hk)
+      break
+    }
+    # if not, locate the covariate (go to or leave the active set)
+    else if(ind<=sum(A)){
+      coef = which(cumsum(A)==ind)[1]
+      A[coef] = F
+      s[coef] = 0
+      # check if active set is empty 
+      if (sum(A) == 0){
+        hk_path = cbind(hk_path, 0,0)
+        w_path = c(w_path, get_w(xi_cand0, hk[k], n), lb)
+        hkk_path = c(hkk_path, 0, 0)
+        s_path = rbind(s_path, s, s)
+        beta_path = rbind(beta_path, beta_hat)
+        beta0_path = c(beta0_path, ybar + get_xi(lb,0,n) * (ybar-y[k])/n)
+        break
+      }
+    }
+    else if(ind>p){
+      coef = which(cumsum(1-A)==(ind-p))[1]
+      A[coef] = T
+      s[coef] = 1
+    }
+    else{
+      coef = which(cumsum(1-A)==(ind-sum(A)))[1]
+      A[coef] = T
+      s[coef] = -1
+    }
+    
+    s_path = rbind(s_path, s)
+    # update omega, XX, beta_hat, d_hat
+    w = get_w(xi_cand0, hk[k], n)
+    XX = solve(t(X[,A])%*%X[,A])
+    beta_hat[A] = XX%*%(t(X[,A])%*%y-lambda*s[A])
+    beta_hat[!A] = 0
+    d_hat = t(X[,!A])%*%y - t(X[,!A])%*%X%*%beta_hat
+    # y_hat = ybar + X%*%beta_hat
+    hk = X[,A]%*%XX%*%X[k,A]
+    yk_hat = drop(ybar + X[k,] %*% beta_hat)
+  }
+  if(plot){
+    plot_helper <-function(x, df){
+      i = findInterval(-x, -w_path, rightmost.closed = T)
+      beta1 = df[i]
+      beta2 = df[i+1]
+      w1 = w_path[i]
+      w2 = w_path[i+1]
+      hkk = hkk_path[i]
+      beta1+(beta2-beta1)*(get_xi(x, hkk, n) - get_xi(w1, hkk, n))/(get_xi(w2, hkk, n) - get_xi(w1, hkk, n))
+    }
+    if (is.null(colnames(X))){
+      coln = 1:p
+    }
+    else{
+      coln = colnames(X)
+    }
+    num_z = apply(beta_path, 2, function(c) sum(abs(c)< 1e-10))
+    ind = which(num_z>0 & num_z<length(w_path))
+    # ind = which(num_z>=0)
+    if (length(ind)>0){
+      if(plot ==1){
+        df = cbind(beta_path[,ind], w_path)
+        colnames(df) = c(coln[ind], 'w')
+        df = as_tibble(df) %>% gather('coef', 'val', -w)
+        print(ggplot(df, aes(x = w, y = val, group=coef, color = coef))+
+                geom_line()+ggtitle(paste("Approx Solution path for Case",toString(k)))+
+                theme(plot.title = element_text(hjust = 0.5)) + ylab(TeX("$\\beta$")))
+      }
+      else{
+        if (length(ind) == 1){
+          xx = data.frame(coef = coln[ind])
+          print(ggplot()+xlim(lb,1) + xlab(TeX("$\\omega$")) + ylab(TeX("$\\beta$")) + 
+                  geom_function(data = xx, fun = plot_helper, args = list(beta_path[,ind]), aes(color = coef))+ 
+                  ggtitle(paste("Solution path for Observation",toString(k)))+
+                  theme(plot.title = element_text(hjust = 0.5)))
+        }
+        else{
+          df = beta_path[,ind]
+          colnames(df) = coln[ind]
+          fig = ggplot()+xlim(lb,1)
+          for (j in 1:length(ind)){
+            xx = data.frame(coef = colnames(df)[j])
+            fig = fig + geom_function(data = xx, fun = plot_helper, 
+                                      args = list(df[,j]), aes(color = coef)) 
+          }
+          fig = fig + labs(color = "Feature")
+          print(fig + xlab(TeX("Case weight $\\omega$")) + ylab(TeX("Coefficient estimate $\\hat{\\beta}$"))+ 
+                  # ggtitle(paste("Solution path for Case",toString(k))) +
+                  theme(plot.title = element_text(hjust = 0.5))+theme(panel.background = element_rect(fill = "white"),
+                                                                      # panel.grid.major = element_line(colour = "grey",linewidth = 0.5),
+                                                                      # panel.grid.minor = element_line(colour = "white",linewidth = 0.5),
+                                                                      panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5)))
+        }
+      }
+    }
+    else{
+      print(paste('there is no sign change for case',toString(k)))
+    }
+  }
+  if(hk_){
+    return(list(w_path = w_path, hkk_path = hkk_path, beta_path = beta_path, s_path = s_path, beta0_path = beta0_path,
+                hk_path = hk_path, l1norm = sum(abs(beta_path[1,]))))
+  }
+  else{
+    return(list(w_path = w_path, hkk_path = hkk_path, beta_path = beta_path, s_path = s_path, beta0_path = beta0_path,
+                l1norm = sum(abs(beta_path[1,]))))
+  }
+}
+
 # case influence all samples, all fractions
 CD_all_concise <- function(X,y,finesse=0.02,plot = T,threshold = F){
   centralize <- function(x, r = F){
