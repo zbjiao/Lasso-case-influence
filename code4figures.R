@@ -1,7 +1,7 @@
 source("caseweightlasso2023.R")
 library(ggpubr)
 library(mnormt)
-
+library(glmnet)
 ####################################################################################
 #-------------------- figure 1 relationship between xi and omega ------------------#
 plot_xi <- function(w, h){
@@ -32,48 +32,130 @@ beta_path(x,y,1,lambda=1.5,plot=2)
 
 ####################################################################################
 #--------------------- figure 3 justify the chisq1 threshold ----------------------#
-par(mfrow=c(2,4))
-
-abpr_simu <- function(n,p,q,r,pic){
-  beta = c(5,4,3,2,1,rep(0,p-5))
-  if (r!=0){
-    cormat<-matrix(0,p,p)
-    for(i in 1:p) {
-      for(j in 1:p) {
-        cormat[i,j] = r^(abs(i-j))
-      }
-    }
-  }
-  else{ 
-    cormat = diag(p) 
-  } 
-  x = rmnorm(n=n,mean=rep(0,p),varcov=cormat) 
-  ep = rnorm(n) 
-  y = x %*% beta + ep 
-  x = centralize(x)
-  fit = cv.glmnet(x,y,standardize = F)
-  result = CD_one_fraction(x,y,fit$lambda.min*n)
-  hist(result$CD_vec,main=paste(TeX('Example'),pic),xlab="")
+# par(mfrow=c(2,4))
+# 
+# abpr_simu <- function(n,p,q,r,pic){
+#   beta = c(5,4,3,2,1,rep(0,p-5))
+#   if (r!=0){
+#     cormat<-matrix(0,p,p)
+#     for(i in 1:p) {
+#       for(j in 1:p) {
+#         cormat[i,j] = r^(abs(i-j))
+#       }
+#     }
+#   }
+#   else{ 
+#     cormat = diag(p) 
+#   } 
+#   x = rmnorm(n=n,mean=rep(0,p),varcov=cormat) 
+#   ep = rnorm(n) 
+#   y = x %*% beta + ep 
+#   x = centralize(x)
+#   fit = cv.glmnet(x,y,standardize = F)
+#   result = CD_one_fraction(x,y,fit$lambda.min*n)
+#   hist(result$CD_vec,main=paste(TeX('Example'),pic),xlab="")
+# }
+# 
+# set.seed(100)
+# nppair = t(matrix(c(100,10,200,10,100,500,200,200),nrow=2))
+# r_v = c(0,0.5)
+# counter = 0
+# pic = 0
+# for (np in 1:nrow(nppair)){
+#   for (r in r_v){
+#     n = nppair[np,1]
+#     p = nppair[np,2]
+#     pic = pic + 1
+#     abpr_simu(n, p, q, r, pic) 
+#     if (pic==7){
+#       break
+#     }
+#   }
+# }
+threshold_plot_helper <- function(x, pic){
+  x = x/sqrt(var(x)/2)
+  hist(x,main=paste(TeX('Example'),pic),xlab="",ylab = "")
 }
+par(mfrow=c(2,5))
+rm(x); rm(y)
+data("diabetes")
+attach(diabetes)
 
-set.seed(100)
-nppair = t(matrix(c(100,10,200,10,100,500,200,200),nrow=2))
-r_v = c(0,0.5)
-counter = 0
-pic = 0
-for (np in 1:nrow(nppair)){
-  for (r in r_v){
-    n = nppair[np,1]
-    p = nppair[np,2]
-    pic = pic + 1
-    abpr_simu(n, p, q, r, pic) 
-    if (pic==7){
-      break
-    }
-  }
-}
-hist(rchisq(1000,1),xlab='',main=TeX('Sampling Distribution of $\\chi^2_1$'))
+# figure 1 
+lambda_max = max(abs(t(x)%*%y))
+result = CookDisLasso(x, y, lambda = 200) 
+threshold_plot_helper(result$CD_Mat[,1],1) 
+# figure 2 
+threshold_plot_helper(cooks.distance(lm(y~x)),2)
+# figure 3 
+fit = cv.glmnet(x,y,standardize = F)
+n = nrow(x)
+result = CookDisLasso(x, y, lambda = fit$lambda.min*n) 
+threshold_plot_helper(result$CD_Mat[,1],3) 
 
+
+detach(diabetes)
+
+dat0=read.csv("GBM3600Set55and65andClinicalInformation.csv")
+# the following data frame contains
+# the gene expression data: columns are genes, rows are arrays (samples)
+datExprdataOne =data.frame(t(dat0[-c(1:4),18:72]))
+datExprdataTwo=data.frame( t(dat0[-c(1:4),73:137]))
+names(datExprdataOne)=as.character( dat0$gbm133a[-c(1:4)])
+names(datExprdataTwo)=as.character( dat0$gbm133a[-c(1:4)])
+# these data frames contain the clinical data of the patients
+datClinicaldataOne=dat0[1:4,18:72]
+datClinicaldataTwo=dat0[1:4,73:137]
+datClinicaldataOne =data.frame(t(dat0[c(1:4),18:72]))
+names(datClinicaldataOne)=as.character(dat0[1:4,1])
+datClinicaldataTwo=data.frame(t(dat0[c(1:4),73:137]))
+
+#getting the gene names
+gnames<-read.csv("GBM3600Set55and65andClinicalInformation.csv")
+gnames<-as.vector(gnames[,6])[-(1:4)]
+gnames<-c("intercept",gnames)
+
+x1<-datExprdataOne[datClinicaldataOne[,1]==1,]
+y1<-log(datClinicaldataOne[datClinicaldataOne[,1]==1,2])
+x<-x1
+x<-as.matrix(x)
+x<-centralize(t(scale(t(log10(x)))))
+y<-as.vector(y1)
+
+# figure 4
+lambda_max = max(abs(t(x)%*%y))
+result = CookDisLasso(x, y, lambda = 3) 
+threshold_plot_helper(result$CD_Mat[,1],4) 
+# figure 5 
+result = CookDisLasso(x, y, lambda = 0.2) 
+threshold_plot_helper(result$CD_Mat[,1],5) 
+# figure 6 
+fit = cv.glmnet(x,y,standardize = F)
+n = nrow(x)
+result = CookDisLasso(x, y, lambda = fit$lambda.min*n) 
+threshold_plot_helper(result$CD_Mat[,1],6) 
+
+# figure 7
+df<-read.table("prostate.txt")
+X = centralize(as.matrix(df[,1:8]))
+y = as.matrix(df[,9])
+lambda_max = max(abs(t(X)%*%y))
+result = CookDisLasso(X, y, lambda = 8) 
+threshold_plot_helper(result$CD_Mat[,1],7) 
+
+# figure 8
+threshold_plot_helper(cooks.distance(lm(y~X)),8)
+
+# figure 9 
+fit = cv.glmnet(X,y,standardize = F)
+n = nrow(X)
+result = CookDisLasso(X, y, lambda = fit$lambda.min*n) 
+threshold_plot_helper(result$CD_Mat[,1],9) 
+
+# figure 10
+set.seed(0)
+hist(rchisq(500,1),xlab='',main=TeX('$\\chi^2_1$'),ylab = '')
+# plot(x = 0:1500/100,y = dchisq(0:1500/100,1),type = 'l',xlab = TeX('x'),ylab = '')
 ####################################################################################
 #-------------------- figure 4 case influence graph mechanism ---------------------#
 set.seed(1)
@@ -446,23 +528,24 @@ print(new_slice_pot(315))
 rm(x); rm(y)
 data(diabetes)
 attach(diabetes)
-
 par(mfrow=c(1,1))
 fit = cv.glmnet(x,y,standardize = F)
 est = glmnet(x,y,lambda=fit$lambda.min,standardize=FALSE,thresh=1e-16)
-
+n = dim(x)[1]
+p = dim(x)[2]
+denom = sum(lm(y~x)$residual**2)/(n-p-1)*(p+1)
 result = CD_one_fraction(x,y,3)
 
-residy = abs(y - mean(y) - (x%*%result$beta))
+residy = y - mean(y) - (x%*%result$beta)
 x_ = x[,result$beta!=0]
 lev = diag(x_%*%solve(crossprod(x_))%*%t(x_))
-df_ = data.frame(index = 1:442, lev = lev, res = residy, Case_Influence = result$CD_vec)
+df_ = data.frame(index = 1:442, lev = lev, res = residy/sqrt((1-lev)*denom), Case_Influence = result$CD_vec)
 
 ggplot(data=df_, aes(x=lev, y=res, size=Case_Influence)) +
   geom_point(aes(color = Case_Influence > 0.025)) +  
   scale_color_manual(values = c("TRUE" = "red", "F" = "black"), guide = FALSE) +
-  xlab(TeX('leverage ($h_{ii}$)')) + 
-  ylab(TeX('absolute residual ($|y-\\hat{y}|$)')) +
+  xlab(TeX('leverage')) + 
+  ylab(TeX('studentized residual')) +
   theme(panel.background = element_rect(fill = "white"),
         legend.position = 'None',
         panel.border = element_rect(colour = "black", fill=NA, linewidth=0.5)) 
