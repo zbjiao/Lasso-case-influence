@@ -72,26 +72,35 @@ beta_path(x,y,1,lambda=1.5,plot=2)
 #     }
 #   }
 # }
-threshold_plot_helper <- function(x, pic){
-  x = x/sqrt(var(x)/2)
-  hist(x,main=paste(TeX('Example'),pic),xlab="",ylab = "")
-}
-par(mfrow=c(2,5))
+# threshold_plot_helper <- function(x){
+#   x = x/sqrt(var(x)/2)
+#   # print(ks.test(x, "pchisq",df=1))
+#   hist(x,main='',xlab="", ylab = "", probability = T)
+#   xlines <-seq(min(x),max(x),length.out=100) #seq of x for pdf
+#   lines(x = xlines,y=dchisq(xlines,1))
+# }
+
+data <- c()
 rm(x); rm(y)
 data("diabetes")
 attach(diabetes)
 
-# figure 1 
+# figure 1
+
 lambda_max = max(abs(t(x)%*%y))
-result = CookDisLasso(x, y, lambda = 200) 
-threshold_plot_helper(result$CD_Mat[,1],1) 
-# figure 2 
-threshold_plot_helper(cooks.distance(lm(y~x)),2)
-# figure 3 
+result = CookDisLasso(x, y, s = 200, mode='lambda')
+order = 1
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+# figure 2
 fit = cv.glmnet(x,y,standardize = F)
 n = nrow(x)
-result = CookDisLasso(x, y, lambda = fit$lambda.min*n) 
-threshold_plot_helper(result$CD_Mat[,1],3) 
+result = CookDisLasso(x, y, s = fit$lambda.min*n, mode='lambda')
+order = 2
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+# figure 2
+order = 3
+data = rbind(data, cbind(order, cooks.distance(lm(y~x))))
+
 
 
 detach(diabetes)
@@ -124,38 +133,93 @@ y<-as.vector(y1)
 
 # figure 4
 lambda_max = max(abs(t(x)%*%y))
-result = CookDisLasso(x, y, lambda = 3) 
-threshold_plot_helper(result$CD_Mat[,1],4) 
-# figure 5 
-result = CookDisLasso(x, y, lambda = 0.2) 
-threshold_plot_helper(result$CD_Mat[,1],5) 
-# figure 6 
+result = CookDisLasso(x, y, s = 3, mode = 'l')
+order = 4
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+# figure 5
 fit = cv.glmnet(x,y,standardize = F)
 n = nrow(x)
-result = CookDisLasso(x, y, lambda = fit$lambda.min*n) 
-threshold_plot_helper(result$CD_Mat[,1],6) 
+result = CookDisLasso(x, y, s = fit$lambda.min*n, mode='l')
+order = 5
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+# figure 6
+result = CookDisLasso(x, y, s = 0.01, mode='l')
+order = 6
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+
 
 # figure 7
 df<-read.table("prostate.txt")
 X = centralize(as.matrix(df[,1:8]))
 y = as.matrix(df[,9])
 lambda_max = max(abs(t(X)%*%y))
-result = CookDisLasso(X, y, lambda = 8) 
-threshold_plot_helper(result$CD_Mat[,1],7) 
+result = CookDisLasso(X, y, s = 8,mode='l')
+order = 7
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
 
 # figure 8
-threshold_plot_helper(cooks.distance(lm(y~X)),8)
-
-# figure 9 
 fit = cv.glmnet(X,y,standardize = F)
 n = nrow(X)
-result = CookDisLasso(X, y, lambda = fit$lambda.min*n) 
-threshold_plot_helper(result$CD_Mat[,1],9) 
+result = CookDisLasso(X, y, s = fit$lambda.min*n,mode='l')
+order = 8
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+
+# figure 9
+order = 9
+data = rbind(data, cbind(order, cooks.distance(lm(y~X))))
+
+
 
 # figure 10
-set.seed(0)
-hist(rchisq(500,1),xlab='',main=TeX('$\\chi^2_1$'),ylab = '')
-# plot(x = 0:1500/100,y = dchisq(0:1500/100,1),type = 'l',xlab = TeX('x'),ylab = '')
+set.seed(100)
+x = matrix(rnorm(200*50),nrow=200)
+x = centralize(x)
+y = x[,1:5]%*%c(5,4,3,2,1) + rnorm(200)
+lambda_max = max(abs(t(x)%*%y))
+
+result = CookDisLasso(x, y, s = 0.2, mode='f')
+order = 10
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+
+# figure 11
+fit = cv.glmnet(x,y,standardize = F)
+n = nrow(x)
+result = CookDisLasso(x, y, s = fit$lambda.min*n, mode='lambda')
+order = 11
+data = rbind(data, cbind(order, result$CD_Mat[,1]))
+
+# figure 12
+order = 12
+data = rbind(data, cbind(order, cooks.distance(lm(y~x))))
+
+# col_names <- c("|A|=1", "0", "CV")
+# Row names
+# row_names <- c("Diabetes", "Glioblastoma", "Prostate", "Synethetic")
+data = data[,1:2]
+data = as.data.frame(data)
+colnames(data) = c('order','value')
+data[data$order<=3,'text'] = 'Diabetes data'
+data[data$order>3 & data$order<=6,'text'] = 'Glioblastoma data'
+data[data$order>6 & data$order<=9,'text'] = 'Prostate cancer data'
+data[data$order>9 & data$order<=12,'text'] = 'Synthetic data'
+data[data$order %in% c(1,4,7,10),'text'] = paste(data[data$order %in% c(1,4,7,10),'text'], '|A|=1',sep=', ')
+data[data$order %in% c(2,5,8,11),'text'] = paste(data[data$order %in% c(2,5,8,11),'text'], 'no penalty',sep=', ')
+data[data$order %in% c(3,6,9,12),'text'] = paste(data[data$order %in% c(3,6,9,12),'text'], 'CV selected penalty',sep=', ')
+data%>%group_by(order)%>%mutate(value=value/sqrt(var(value)/2))%>%
+  ggplot( aes(x=value, color=text, fill=text)) +
+  geom_histogram(alpha=0.6,aes(y=after_stat(density))) +
+  stat_function(fun = dchisq, args = list(df = 1),color='black')+ylim(c(0,1))+
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 9)
+  ) +
+  xlab("") +
+  ylab("Density")+facet_wrap(~factor(text),nrow=4,ncol=3)
+
 ####################################################################################
 #-------------------- figure 4 case influence graph mechanism ---------------------#
 set.seed(1)
