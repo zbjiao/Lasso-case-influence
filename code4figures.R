@@ -198,28 +198,40 @@ data = rbind(data, cbind(order, cooks.distance(lm(y~x))))
 data = data[,1:2]
 data = as.data.frame(data)
 colnames(data) = c('order','value')
-data[data$order<=3,'text'] = 'Diabetes data'
-data[data$order>3 & data$order<=6,'text'] = 'Glioblastoma data'
-data[data$order>6 & data$order<=9,'text'] = 'Prostate cancer data'
-data[data$order>9 & data$order<=12,'text'] = 'Synthetic data'
-data[data$order %in% c(1,4,7,10),'text'] = paste(data[data$order %in% c(1,4,7,10),'text'], '|A|=1',sep=', ')
-data[data$order %in% c(2,5,8,11),'text'] = paste(data[data$order %in% c(2,5,8,11),'text'], 'no penalty',sep=', ')
-data[data$order %in% c(3,6,9,12),'text'] = paste(data[data$order %in% c(3,6,9,12),'text'], 'CV selected penalty',sep=', ')
-data%>%group_by(order)%>%mutate(value=value/sqrt(var(value)/2))%>%
-  ggplot( aes(x=value, color=text, fill=text)) +
-  geom_histogram(alpha=0.6,aes(y=after_stat(density))) +
-  stat_function(fun = dchisq, args = list(df = 1),color='black')+ylim(c(0,1))+
+data[data$order<=3,'source'] = 'Diabetes'
+data[data$order>3 & data$order<=6,'source'] = 'Glioblastoma'
+data[data$order>6 & data$order<=9,'source'] = 'Prostate'
+data[data$order>9 & data$order<=12,'source'] = 'Synthetic'
+data[data$order %in% c(1,4,7,10),'pen'] = '|A|=1'
+data[data$order %in% c(2,5,8,11),'pen'] = 'no penalty'
+data[data$order %in% c(3,6,9,12),'pen'] = 'cross-validated penalty'
+data$source = as.factor(data$source)
+data$pen = as.factor(data$pen)
+p = data%>%group_by(order)%>%mutate(value=value/sqrt(var(value)/2))%>%
+  ggplot( aes(x=value, color=source, fill=source)) +
+  geom_histogram(alpha=0.6,aes(y=after_stat(density)),bins = 25) +
+  stat_function(fun = dchisq, args = list(df = 1),color='black')+ylim(c(0,1))+xlim(c(0,9))+
   scale_fill_viridis(discrete=TRUE) +
   scale_color_viridis(discrete=TRUE) +
   theme_ipsum() +
   theme(
     legend.position="none",
-    panel.spacing = unit(0.1, "lines"),
-    strip.text.x = element_text(size = 9)
+    panel.spacing = unit(0.15, "lines"),
+    axis.text.y = element_text(size=9),
+    strip.text.x = element_text(size = 10, face = "bold.italic",hjust=0.5),
+    strip.text.y = element_text(size = 10, face = "bold.italic",hjust=0.5)
   ) +
-  xlab("") +
-  ylab("Density")+facet_wrap(~factor(text),nrow=4,ncol=3)
-
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  # theme(plot.title = element_text(hjust = 0.5),
+  #       panel.background = element_rect(fill = "white"),
+  #       panel.border = element_rect(colour = "black", fill = NA, linewidth = 0.5)
+  #       )+
+  xlab("") + ylab("Density")+
+  facet_grid(source ~ pen) 
+  # facet_wrap(~factor(text),nrow=4,ncol=3)
+ggsave(p, filename = "example3.svg", 
+       width = 8, height = 8, units = "in")
 ####################################################################################
 #-------------------- figure 4 case influence graph mechanism ---------------------#
 set.seed(1)
@@ -597,7 +609,7 @@ fit = cv.glmnet(x,y,standardize = F)
 est = glmnet(x,y,lambda=fit$lambda.min,standardize=FALSE,thresh=1e-16)
 n = dim(x)[1]
 p = dim(x)[2]
-denom = sum(lm(y~x)$residual**2)/(n-p-1)*(p+1)
+denom = sum(lm(y~x)$residual**2)/(n-p-1)
 result = CD_one_fraction(x,y,3)
 
 residy = y - mean(y) - (x%*%result$beta)
@@ -609,9 +621,112 @@ ggplot(data=df_, aes(x=lev, y=res, size=Case_Influence)) +
   geom_point(aes(color = Case_Influence > 0.025)) +  
   scale_color_manual(values = c("TRUE" = "red", "F" = "black"), guide = FALSE) +
   xlab(TeX('leverage')) + 
+  geom_hline(yintercept=0, linetype="dashed", color = "gray") +
   ylab(TeX('studentized residual')) +
   theme(panel.background = element_rect(fill = "white"),
         legend.position = 'None',
         panel.border = element_rect(colour = "black", fill=NA, linewidth=0.5)) 
 
 detach(diabetes)
+
+
+####################################################################################
+#--------------- figure 9 empirical distribution of  ----------------#
+get_std_residual = function(x,y,name){
+  m = glmnet(x,y)
+  
+  residuals_df <- as.data.frame(t(apply(predict(m,x),2,function(x) x-y)))
+  # apply(m$beta,2,function(x) sum(abs(x)))/sum(abs(lm(y~x)$coefficients)[2:dim(x)[2]])
+  # Add a column identifier
+  residuals_df$fraction <- apply(m$beta,2,function(x) sum(abs(x)))/sum(abs(glmnet(x,y,lambda = 0)$beta))
+  # sum(abs(lm(y~x)$coefficients)[2:dim(x)[2]])
+  
+  # Pivot longer to get a suitable format for ggplot
+  residuals_long <- pivot_longer(residuals_df, -fraction, names_to = "Variable", values_to = "Residual")
+  residuals_long = residuals_long %>% group_by(fraction) %>% mutate(Residual = (Residual - mean(Residual))/sd(Residual))
+  residuals_long$name = name
+  return(residuals_long)
+}
+
+rm(x); rm(y)
+data(diabetes)
+residuals_long1 = get_std_residual(x,y,'Diabetes')
+detach(diabetes)
+
+dat0=read.csv("GBM3600Set55and65andClinicalInformation.csv")
+# the following data frame contains
+# the gene expression data: columns are genes, rows are arrays (samples)
+datExprdataOne =data.frame(t(dat0[-c(1:4),18:72]))
+datExprdataTwo=data.frame( t(dat0[-c(1:4),73:137]))
+names(datExprdataOne)=as.character( dat0$gbm133a[-c(1:4)])
+names(datExprdataTwo)=as.character( dat0$gbm133a[-c(1:4)])
+# these data frames contain the clinical data of the patients
+datClinicaldataOne=dat0[1:4,18:72]
+datClinicaldataTwo=dat0[1:4,73:137]
+datClinicaldataOne =data.frame(t(dat0[c(1:4),18:72]))
+names(datClinicaldataOne)=as.character(dat0[1:4,1])
+datClinicaldataTwo=data.frame(t(dat0[c(1:4),73:137]))
+
+#getting the gene names
+gnames<-read.csv("GBM3600Set55and65andClinicalInformation.csv")
+gnames<-as.vector(gnames[,6])[-(1:4)]
+gnames<-c("intercept",gnames)
+
+x1<-datExprdataOne[datClinicaldataOne[,1]==1,]
+y1<-log(datClinicaldataOne[datClinicaldataOne[,1]==1,2])
+x<-x1
+x<-as.matrix(x)
+x<-centralize(t(scale(t(log10(x)))))
+y<-as.vector(y1)
+residuals_long2 = get_std_residual(x,y,'Glioblastoma')
+
+df<-read.table("prostate.txt")
+x = centralize(as.matrix(df[,1:8]))
+y = as.matrix(df[,9])
+residuals_long3 = get_std_residual(x,y,'Prostate')
+
+x <- matrix(rnorm(200*500), nrow=500)
+y <- x[,1:5] %*% c(5,4,3,2,1) + rnorm(500,0,4)
+residuals_long4 = get_std_residual(x,y,'Synthetic')
+
+residuals_long = rbind(residuals_long1,residuals_long2,residuals_long3,residuals_long4)
+
+
+residuals_long$name = as.factor(residuals_long$name)
+
+# plot
+p <- data %>%
+  mutate(text = fct_reorder(text, value)) %>%
+  ggplot( aes(x=value, color=text, fill=text)) +
+  geom_histogram(alpha=0.6, binwidth = 5) +
+  scale_fill_viridis(discrete=TRUE) +
+  scale_color_viridis(discrete=TRUE) +
+  theme_ipsum() +
+  theme(
+    legend.position="none",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  ) +
+  xlab("") +
+  ylab("Assigned Probability (%)") +
+  facet_wrap(~text)
+
+
+ggplot(residuals_long, aes(x = Residual, group=fraction,color = fraction)) +
+  geom_density() + # Adjust alpha for fading effect
+  scale_color_viridis_c(option = 'G',alpha = 0.5) + # Use a color scale that supports fading well
+  theme_minimal() +
+  stat_function(fun = dnorm,color='black',group=0)+
+  labs(
+    x = "Standardized Residuals",
+    y = "Density") +
+  theme(strip.text.x = element_text(size = 8))+
+  guides(color = FALSE)+facet_wrap(~name)
+
+
+
+
+
+
+
+

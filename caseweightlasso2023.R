@@ -616,7 +616,13 @@ CD_one_fraction <- function(X,y,lambda=1, alpha=0.05, external = F){
   else{
     h_backup = X[,A_backup]%*%XX_backup%*%t(X[,A_backup])
   }
-  yhat = ybar + X[,A_backup] %*% beta_hat[A_backup]
+  if (sum(A_backup)>1){
+    yhat = ybar + X[,A_backup] %*% beta_hat[A_backup]
+  }
+  else{
+    yhat = ybar + X[,A_backup] * beta_hat[A_backup]
+  }
+  
   # threshold_list = c(threshold_list, tmvnorm_to_f_mc(beta_hat_backup, s_backup, 0.05))
   CD_list = c()
   
